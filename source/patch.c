@@ -1,3 +1,7 @@
+/**
+ * @file patch.c
+ * @brief Game-specific hooks, memory patches, and custom symbol intercepts.
+ */
 #include <stdio.h>
 #include <string.h>
 
@@ -6,19 +10,19 @@
 #include "macho.h"
 #include "patch.h"
 
-// Tablas de imports especificos del juego que se este portando.
-// Agrega aqui las funciones del binario que desees interceptar o reemplazar.
+// Game-specific import tables for the port being developed.
+// Register any guest binary symbols you wish to intercept or replace here.
 const import_entry patch_imports[] = {
-    // Ejemplo:
-    // F(mi_funcion_personalizada, mi_implementacion),
+    // Example:
+    // F(my_custom_function, my_implementation),
 };
 const int patch_imports_count = sizeof(patch_imports) / sizeof(patch_imports[0]);
 
 void patch_init(void) {
-    l_info("Inicializando parches especificos del juego...");
-    // Coloca aqui tus llamadas a macho_hook(...) si necesitas desviar funciones internas
+    l_info("Initializing game-specific patches...");
+    // Place macho_hook(...) calls here to redirect internal guest functions
 }
 
 void patch_frame(void) {
-    // Logica por frame si el juego lo requiere
+    // Per-frame logic if required by target engine
 }

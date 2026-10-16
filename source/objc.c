@@ -1,16 +1,17 @@
-// Mini runtime ObjC: no hay clases ni métodos, solo un despacho por nombre de selector (los
-// selrefs apuntan al nombre en __objc_methname) para lo poco de Foundation/UIKit que el motor
-// necesita de verdad:
-//   - texto: ___utilGetStringWidth/___utilMakeString usan NSString + UIFont (sizeWithFont:,
-//     drawAtPoint:withFont:) sobre un CGBitmapContext gris de 512x32 (atlas de glifos). Se
-//     dibuja con FreeType sobre ese mismo buffer: el resto del motor (quads, ___utilFontOut)
-//     queda intacto.
-//   - rutas/versión/fecha: resourcePath (FMOD), objectForInfoDictionaryKey:, NSCalendar.
-//   - entrada de texto (nombre del personaje): textInput* de EAGLView -> sceImeDialog.
-// Todo lo demás devuelve nil/0 como antes, registrando el selector la primera vez.
-//
-// Los NSString propios tienen el layout de un __cfstring {isa, flags, cstr, len}: así las
-// constantes @"..." del binario y los creados acá se leen igual (cstr en +8).
+/**
+ * @file objc.c
+ * @brief Lightweight Objective-C and Foundation/UIKit runtime emulation.
+ * @details Implements selector-name dispatching (selrefs point to strings in __objc_methname)
+ *          to satisfy Foundation/UIKit calls required by iOS game engines:
+ *          - Typography: NSString + UIFont (sizeWithFont:, drawAtPoint:withFont:) rendered
+ *            onto a 512x32 grayscale CGBitmapContext glyph atlas via FreeType.
+ *          - Bundle paths/dates: resourcePath, objectForInfoDictionaryKey:, NSCalendar.
+ *          - Text input: EAGLView text input dialogs routed through sceImeDialog.
+ *          All other selectors log a warning and return nil/0.
+ *
+ *          Custom NSString structures mirror __cfstring layout {isa, flags, cstr, len},
+ *          ensuring @"..." binary constants and dynamic strings share identical field offsets (cstr at +8).
+ */
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <psp2/common_dialog.h>
@@ -36,8 +37,8 @@ typedef struct {
     uint32_t len;
 } ns_string;
 
-// ponytail: los NSString son autorelease en iOS; acá viven en un anillo de 256 (el motor solo
-// los usa dentro de la misma función). Si algún día uno se guarda, pasarlo a malloc propio.
+// Autorelease ring buffer: NSString instances in iOS are autoreleased; here they live in a ring
+// buffer of 256 entries. If long-term persistence is needed, migrate to dedicated malloc.
 static ns_string *ns_new(const char *s) {
     static ns_string ring[256];
     static int next;
@@ -69,7 +70,7 @@ static int utf16_len(const char *s) {
     return n;
 }
 
-// stringWithFormat: con el printf de Darwin (%@, doubles en 2 palabras).
+// stringWithFormat: using Darwin variadic printf (%@, unaligned 64-bit words).
 static ns_string *ns_format(const char *fmt, va_list ap) {
     char out[1024];
     va_list cp;
@@ -80,10 +81,10 @@ static ns_string *ns_format(const char *fmt, va_list ap) {
     return ns_new(out);
 }
 
-// ---------------------------------------------------------------- fuentes (FreeType)
+// ---------------------------------------------------------------- fonts (FreeType)
 
 typedef struct {
-    uint32_t key; // tamaño << 24 | código
+    uint32_t key; // size << 24 | codepoint
     int16_t left, top, adv;
     uint16_t w, h;
     uint8_t *bmp;
@@ -96,19 +97,19 @@ static FT_Face faces[4];
 static int nfaces = -1;
 
 static void fonts_init(void) {
-    // font.ttf propio primero (por si el sistema no tiene algún alfabeto), después los del sistema.
+    // Custom font.ttf checked first, then PS Vita system fonts.
     static const char *paths[] = {DATA_PATH "font.ttf", "sa0:data/font/pvf/ltn0.pvf",
                                   "sa0:data/font/pvf/kr0.pvf", "sa0:data/font/pvf/jpn0.pvf"};
     nfaces = 0;
     if (FT_Init_FreeType(&ft))
-        return l_error("FreeType no inicializa: sin texto");
+        return l_error("FreeType failed to initialize: font rendering disabled");
     for (int i = 0; i < 4; i++)
         if (!FT_New_Face(ft, paths[i], 0, &faces[nfaces])) {
-            l_info("fuente: %s", paths[i]);
+            l_info("loaded font: %s", paths[i]);
             nfaces++;
         }
     if (!nfaces)
-        l_error("ninguna fuente cargó: sin texto");
+        l_error("no fonts loaded: text rendering disabled");
 }
 
 static const glyph *get_glyph(int size, uint32_t cp) {
@@ -125,7 +126,7 @@ static const glyph *get_glyph(int size, uint32_t cp) {
             break;
         }
     }
-    if (!g) { // caché llena en esa zona: se rasteriza igual, sin guardar
+    if (!g) { // cache full for this bucket: rasterize directly without caching
         free(tmp.bmp);
         g = &tmp;
     }
@@ -156,8 +157,8 @@ static const glyph *get_glyph(int size, uint32_t cp) {
     return g;
 }
 
-// ponytail: alto de línea y línea base aproximan la Helvetica de iOS 3 (14pt->18, 13->16,
-// 11->14). Si el texto queda corrido verticalmente en consola, se ajusta solo esto.
+// Line height and baseline approximations matching iOS 3 Helvetica (14pt->18, 13->16, 11->14).
+// Adjust here if vertical alignment requires calibration.
 static int line_height(int size) { return size == 14 ? 18 : size == 13 ? 16 : size == 11 ? 14 : (size * 5 + 2) / 4; }
 static int baseline(int size) { return (line_height(size) - size) / 2 + (size * 4 + 2) / 5; }
 
@@ -210,8 +211,8 @@ static ui_font *font_of_size(float pt) {
     return &fonts[31];
 }
 
-// UIKit dibuja con el eje y hacia abajo; el contexto del atlas no está invertido, así que el texto
-// queda cabeza abajo en memoria (fila j del glifo -> fila h-1-j), que es lo que espera el motor.
+// UIKit draws with Y-axis pointing downwards; atlas context is un-inverted,
+// placing text upside-down in memory (glyph row j -> row h-1-j), as expected by guest quad blitters.
 static void draw_text(cg_ctx *c, const char *s, int x, int y, int size) {
     int pen = x, base = baseline(size);
     uint8_t ink = (uint8_t)(c->gray * 255.0f);
@@ -234,7 +235,7 @@ static void draw_text(cg_ctx *c, const char *s, int x, int y, int size) {
     }
 }
 
-// ---------------------------------------------------------------- entrada de texto (IME)
+// ---------------------------------------------------------------- text input (IME)
 
 static int ime_type = -1;
 static char ime_utf8[128];
@@ -255,7 +256,7 @@ static void ime_open(int type) {
     int r = sceImeDialogInit(&p);
     if (r < 0)
         l_error("sceImeDialogInit = 0x%08X", r);
-    ime_type = type; // aunque falle: ime_poll cierra el evento y el juego no queda esperando
+    ime_type = type; // even if init fails: ime_poll will close dialog event so game doesn't stall
 }
 
 int ime_active(void) { return ime_type >= 0; }
@@ -287,7 +288,7 @@ void ime_poll(void) {
     }
     int type = ime_type;
     ime_type = -1;
-    l_info("texto ingresado (%d): \"%s\"", type, ime_utf8);
+    l_info("input text entered (%d): \"%s\"", type, ime_utf8);
     uintptr_t text_close_fn = macho_sym("_Ex_HandleEventTextClose");
     if (text_close_fn)
         call_guest((void *)text_close_fn, type, 0, 0, 0);
@@ -314,7 +315,7 @@ static int sel_is(const char *sel, const char *name) { return !strcmp(sel, name)
 static uint32_t objc_msgSend(void *self, const char *sel, ...) {
     va_list ap;
     va_start(ap, sel);
-    uint32_t a = va_arg(ap, uint32_t); // primer argumento (si lo hay)
+    uint32_t a = va_arg(ap, uint32_t); // first argument (if present)
     uint32_t r = 0;
     const struct tm *now;
     time_t t;
@@ -339,7 +340,7 @@ static uint32_t objc_msgSend(void *self, const char *sel, ...) {
     } else if (sel_is(sel, "resourcePath")) {
         char p[256];
         snprintf(p, sizeof(p), "%s", BUNDLE_PATH);
-        p[strlen(p) - 1] = 0; // sin la barra final, como NSBundle
+        p[strlen(p) - 1] = 0; // strip trailing slash, matching NSBundle resourcePath
         r = (uint32_t)ns_new(p);
     } else if (sel_is(sel, "objectForInfoDictionaryKey:")) {
         const char *k = ns_cstr((void *)a);
@@ -361,7 +362,7 @@ static uint32_t objc_msgSend(void *self, const char *sel, ...) {
     return r;
 }
 
-// Métodos que devuelven structs (CGSize/CGPoint): el primer argumento es el buffer de retorno.
+// Methods returning composite structs (CGSize/CGPoint): first argument is return pointer.
 static void objc_msgSend_stret(float *ret, void *self, const char *sel, ...) {
     va_list ap;
     va_start(ap, sel);
@@ -385,7 +386,7 @@ static void objc_msgSend_stret(float *ret, void *self, const char *sel, ...) {
     va_end(ap);
 }
 
-// ---------------------------------------------------------------- tabla
+// ---------------------------------------------------------------- table
 
 #define F(name, fn) {"_" #name, (uintptr_t)(fn)}
 

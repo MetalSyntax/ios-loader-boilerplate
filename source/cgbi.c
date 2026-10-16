@@ -1,7 +1,12 @@
-// PNG "CgBI" de iOS (los PNG del bundle que Xcode pasa por el pngcrush de Apple): chunk 'CgBI'
-// antes de IHDR, IDAT en deflate crudo (sin cabecera zlib), píxeles BGR(A) con alfa ya
-// premultiplicado. libpng no los lee; se decodifican acá tal cual vienen en el IPA.
-// Sin dependencias de la Vita (solo zlib): se prueba en el host.
+/**
+ * @file cgbi.c
+ * @brief Apple CgBI PNG decoder.
+ * @details Decodes iOS bundle PNGs processed by Apple's proprietary pngcrush:
+ *          has a 'CgBI' chunk before IHDR, raw deflate IDAT streams (without zlib header),
+ *          and BGR(A) pixel order with premultiplied alpha. Standard libpng rejects them;
+ *          they are decoded directly here as shipped inside the IPA package.
+ *          Self-contained with zero Vita dependencies (only zlib) for host testing.
+ */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,7 +56,7 @@ uint8_t *cgbi_decode(const void *data, int len, int *w, int *h, int *bpp, void *
         else if (!memcmp(p + 4, "IDAT", 4))
             idat_len += be32(p);
     }
-    // 8 bits, RGB (2) o RGBA (6), sin entrelazado: lo único que produce el pngcrush de Apple.
+    // 8-bit, RGB (2) or RGBA (6), non-interlaced: standard Apple pngcrush output.
     if (!ihdr || ihdr[8] != 8 || (ihdr[9] != 2 && ihdr[9] != 6) || ihdr[12])
         return NULL;
     *w = be32(ihdr);

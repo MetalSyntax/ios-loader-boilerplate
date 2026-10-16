@@ -1,3 +1,7 @@
+/**
+ * @file main.c
+ * @brief Application entry point and runtime bootstrap for the PS Vita iOS loader.
+ */
 #include <psp2/apputil.h>
 #include <psp2/common_dialog.h>
 #include <psp2/io/dirent.h>
@@ -20,10 +24,10 @@
 #include "patch.h"
 
 int _newlib_heap_size_user = 256 * 1024 * 1024;
-// El hilo principal de iOS requiere buen margen de stack (4 MB)
+// Guest main thread requires substantial stack headroom (4 MB)
 unsigned int sceUserMainThreadStackSize = 4 * 1024 * 1024;
 
-// Sistema de logs rotativo (log_001.log .. log_999.log)
+// Rotating log file manager (log_001.log .. log_999.log)
 static int next_log_number(void) {
     sceIoMkdir(DATA_PATH, 0777);
     sceIoMkdir(LOGS_PATH, 0777);
@@ -46,27 +50,27 @@ static int next_log_number(void) {
 }
 
 int main(int argc, char *argv[]) {
-    // Overclock estándar de PS Vita para emulación fluida
+    // Standard PS Vita overclock for optimal emulation frame pacing
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
 
-    // Preparar directorio de guardado y logs
+    // Prepare save data and logs directories
     sceIoMkdir(DATA_PATH, 0777);
     sceIoMkdir(DOCS_PATH, 0777);
     char log_path[128];
     snprintf(log_path, sizeof(log_path), LOGS_PATH "log_%03d.log", next_log_number());
     log_open(log_path);
-    l_info("=== iOS Mach-O Loader para PS Vita Iniciando ===");
+    l_info("=== iOS Mach-O Loader for PS Vita Initializing ===");
 
-    // Comprobación de runtime ShaRKBR33D
+    // Verify ShaRKBR33D runtime availability
     if (sceIoGetstat("ur0:/data/libshacccg.suprx", &(SceIoStat){0}) < 0 &&
         sceIoGetstat("ur0:/data/external/libshacccg.suprx", &(SceIoStat){0}) < 0) {
-        fatal_error("Falta libshacccg.suprx (instalarlo con ShaRKBR33D en la consola).");
+        fatal_error("Missing libshacccg.suprx (install it via ShaRKBR33D on console).");
     }
 
-    // Inicializar AppUtil y diálogos comunes
+    // Initialize AppUtil and system common dialogs
     SceAppUtilInitParam init;
     SceAppUtilBootParam boot;
     memset(&init, 0, sizeof(init));
@@ -79,28 +83,28 @@ int main(int argc, char *argv[]) {
     sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, (int *)&dlg.enterButtonAssign);
     sceCommonDialogSetConfigParam(&dlg);
 
-    // Inicializar subsistemas
+    // Initialize subsystems
     gles_init();
     darwin_init();
     input_init();
 
-    // Cargar ejecutable Mach-O del juego
-    // Nota: El ejecutable se busca dentro del bundle game_app/
-    // o el nombre configurado en patch.c / CMakeLists
-    l_info("Cargando ejecutable principal Mach-O...");
+    // Load guest Mach-O executable
+    // Note: Executable is loaded from inside bundle game_app/
+    // or custom filename configured in patch.c / CMakeLists
+    l_info("Loading primary Mach-O executable...");
     int res = macho_load(BUNDLE_PATH "game_exec", DATA_PATH "rebase.bin");
     if (res < 0) {
-        // Fallback: intentar leer binarios comunes si 'game_exec' fue renombrado
-        fatal_error("No se pudo cargar el ejecutable Mach-O en %s", BUNDLE_PATH "game_exec");
+        // Fallback error if game binary cannot be accessed
+        fatal_error("Failed to load Mach-O executable at %s", BUNDLE_PATH "game_exec");
     }
 
-    // Inicializar parches y hooks
+    // Initialize game-specific hooks and memory patches
     patch_init();
 
-    // Ejecutar constructores estáticos C/C++ (__mod_init_func)
+    // Execute C/C++ static constructors (__mod_init_func)
     macho_run_inits();
 
-    // Buscar punto de entrada
+    // Locate entry point
     uintptr_t entry = macho_sym("_main");
     if (!entry)
         entry = macho_sym("_SDL_main");
@@ -108,14 +112,14 @@ int main(int argc, char *argv[]) {
         entry = macho_sym("_startClet");
 
     if (entry) {
-        l_info("Saltando al punto de entrada en 0x%08X (offset Mach-O 0x%08X)",
+        l_info("Jumping to guest entry point at 0x%08X (Mach-O offset 0x%08X)",
                (unsigned)entry, (unsigned)(entry - MACHO_SLIDE));
         call_guest((void *)entry, 0, 0, 0, 0);
     } else {
-        l_warn("No se encontro '_main' ni '_startClet'; entrando en bucle de eventos...");
+        l_warn("Neither '_main' nor '_startClet' found; entering default event loop...");
     }
 
-    // Bucle principal por defecto si el juego opera por callbacks o timers
+    // Main fallback event loop if game relies on timers or callbacks
     for (;;) {
         input_poll();
         ime_poll();

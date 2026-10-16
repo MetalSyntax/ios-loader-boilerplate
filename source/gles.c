@@ -1,12 +1,14 @@
-// OpenGL ES 1.1 de iOS -> vitaGL.
-//
-// El juego dibuja en el renderbuffer vertical de 320x480 que en iOS crea EAGLView (con su propia
-// rotación a apaisado en la proyección). Acá ese renderbuffer es un FBO con textura del mismo
-// tamaño: viewport, scissor y glCopyTexImage2D siguen en el espacio de iOS sin tocar nada. Al
-// presentar (gles_present) el FBO se dibuja girado y escalado sobre la pantalla de 960x544.
-//
-// Todos los gl* importados tienen solo argumentos enteros/punteros (variantes *x): no hay
-// problema de softfp. Los arrays GL_FIXED se convierten a float justo antes de dibujar.
+/**
+ * @file gles.c
+ * @brief OpenGL ES 1.1 pipeline translation over vitaGL.
+ * @details The game renders into a virtual 320x480 portrait renderbuffer created on iOS by EAGLView
+ *          (with internal projection rotation to landscape). Here that renderbuffer is an FBO with a texture
+ *          of the same size: viewport, scissor, and glCopyTexImage2D remain in iOS coordinate space untouched.
+ *          During presentation (gles_present), the FBO is drawn rotated and scaled onto the native 960x544 screen.
+ *
+ *          All imported gl* functions take only integer/pointer arguments (*x variants): no SoftFP issues.
+ *          GL_FIXED vertex arrays are converted to float immediately before draw calls.
+ */
 #include <stdlib.h>
 #include <string.h>
 #include <vitaGL.h>
@@ -20,7 +22,7 @@
 #define FB_H 480
 #define SCR_W 960
 #define SCR_H 544
-// Rectángulo destino: 480x320 escalado al alto de la Vita (1,7x) y centrado.
+// Destination rectangle: 480x320 scaled to Vita screen height (1.7x) and centered horizontally.
 #define DST_H SCR_H
 #define DST_W (DST_H * FB_H / FB_W)
 #define DST_X ((SCR_W - DST_W) / 2)
@@ -31,7 +33,7 @@
 
 static GLuint fbo, fbo_tex;
 
-// Estado que el blit pisa y glGet no devuelve completo: se lleva acá.
+// Cached state overwritten during blit that glGet cannot fully query:
 typedef struct {
     GLint size;
     GLenum type;
@@ -43,7 +45,7 @@ static int client_unit; // glClientActiveTexture - GL_TEXTURE0
 static GLint env_mode = GL_MODULATE;
 static GLfixed color[4] = {0x10000, 0x10000, 0x10000, 0x10000};
 
-// ---------------------------------------------------------------- arrays GL_FIXED
+// ---------------------------------------------------------------- GL_FIXED arrays
 
 static float *conv_buf[3];
 static int conv_cap[3];
@@ -64,7 +66,7 @@ static const void *fixed_to_float(const array_ptr *a, int n, int slot) {
 }
 
 static void apply_vertex(int n) {
-    if (!vtx.size || (vtx.type == GL_FIXED && !n)) // los GL_FIXED se convierten al dibujar
+    if (!vtx.size || (vtx.type == GL_FIXED && !n)) // GL_FIXED arrays are converted at draw time
         return;
     if (vtx.type == GL_FIXED)
         glVertexPointer(vtx.size, GL_FLOAT, 0, fixed_to_float(&vtx, n, 0));
@@ -125,7 +127,7 @@ static void g_glGetPointerv(GLenum pname, void **out) {
         glGetPointerv(pname, out);
 }
 
-// ---------------------------------------------------------------- estado *x
+// ---------------------------------------------------------------- *x state
 
 static void g_glColor4x(GLfixed r, GLfixed g, GLfixed b, GLfixed a) {
     color[0] = r, color[1] = g, color[2] = b, color[3] = a;
@@ -139,12 +141,12 @@ static void g_glTexEnvi(GLenum target, GLenum pname, GLint v) {
 }
 
 static void g_glTexEnvxv(GLenum target, GLenum pname, const GLfixed *v) {
-    if (pname == GL_TEXTURE_ENV_MODE) // enum, no punto fijo
+    if (pname == GL_TEXTURE_ENV_MODE) // enum value, not fixed point
         return g_glTexEnvi(target, pname, v[0]);
     glTexEnvxv(target, pname, (GLfixed *)v);
 }
 
-// Los parámetros de textura que usa el juego son enums (filtros, wrap): sin escalar.
+// Texture parameters used by the engine are enums (filters, wrap modes): pass unscaled.
 static void g_glTexParameterx(GLenum target, GLenum pname, GLfixed v) { glTexParameteri(target, pname, v); }
 
 static void g_glGetFixedv(GLenum pname, GLfixed *out) {
@@ -163,7 +165,7 @@ static void g_glGetFixedv(GLenum pname, GLfixed *out) {
 
 static void g_glGetLightxv(GLenum light, GLenum pname, GLfixed *out) { memset(out, 0, 4 * sizeof(GLfixed)); }
 
-// ---------------------------------------------------------------- framebuffer de EAGLView
+// ---------------------------------------------------------------- EAGLView framebuffer emulation
 
 static GLuint next_name = 1;
 static void g_glGenNames(GLsizei n, GLuint *ids) {
@@ -194,7 +196,7 @@ void gles_init(void) {
     glViewport(0, 0, FB_W, FB_H);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
-    l_info("vitaGL: FBO %ux%u -> pantalla %ux%u en x=%d", FB_W, FB_H, DST_W, DST_H, DST_X);
+    l_info("vitaGL: FBO %ux%u -> screen %ux%u at x=%d", FB_W, FB_H, DST_W, DST_H, DST_X);
 }
 
 void gles_present(void) {
@@ -235,17 +237,17 @@ void gles_present(void) {
     glPushMatrix();
     glLoadIdentity();
     glClear(GL_COLOR_BUFFER_BIT);
-    // Esquinas de pantalla (sup-izq, sup-der, inf-izq, inf-der) -> textura del FBO vertical.
-    // ponytail: rotación supuesta (landscape-right: el borde superior del FBO queda a la
-    // izquierda); si la imagen sale girada/espejada, se corrige solo esta tabla de UVs.
+    // Screen corners (top-left, top-right, bottom-left, bottom-right) -> vertical FBO texture.
+    // Assumed landscape-right rotation (top edge of FBO aligns to left edge of screen).
+    // Adjust UV mapping table if target game renders mirrored or inverted.
     static const float uv[] = {1, 1, 1, 0, 0, 1, 0, 0};
     const float xy[] = {DST_X, 0, DST_X + DST_W, 0, DST_X, SCR_H, DST_X + DST_W, SCR_H};
     glVertexPointer(2, GL_FLOAT, 0, xy);
     glTexCoordPointer(2, GL_FLOAT, 0, uv);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    vglSwapBuffers(ime_active()); // GL_TRUE mientras hay un diálogo del sistema abierto
+    vglSwapBuffers(ime_active()); // GL_TRUE while system dialog is active
 
-    // Restaurar lo que el juego tenía.
+    // Restore guest OpenGL state.
     glPopMatrix();
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
@@ -271,7 +273,7 @@ void gles_present(void) {
     glActiveTexture(active);
 }
 
-// ---------------------------------------------------------------- tabla
+// ---------------------------------------------------------------- import table
 
 #define F(name, fn) {"_" #name, (uintptr_t)(fn)}
 #define D(name) {"_" #name, (uintptr_t)(name)}

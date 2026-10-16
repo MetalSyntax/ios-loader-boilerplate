@@ -1,3 +1,7 @@
+/**
+ * @file hle.h
+ * @brief Canonical storage path constants for PS Vita high-level emulation.
+ */
 #pragma once
 
 #ifndef DATA_PATH

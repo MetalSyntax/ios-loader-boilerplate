@@ -1,3 +1,7 @@
+/**
+ * @file darwin.h
+ * @brief Darwin POSIX/libc/pthreads subsystem bridge for PS Vita.
+ */
 #pragma once
 #include <stddef.h>
 

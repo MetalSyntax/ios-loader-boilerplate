@@ -2,14 +2,14 @@
     .arm
     .text
 
-@ Import sin implementar: el thunk deja su índice en r12. Registra el nombre y devuelve 0
-@ (r0 = r1 = 0, que sirve como "nil" para ObjC y 0 para retornos de 64 bits).
+@ Unimplemented import handler: thunk leaves its index in r12. Logs name and returns 0
+@ (r0 = r1 = 0, which acts as "nil" for ObjC and 0 for 64-bit integer returns).
     .global ml_unimpl_entry
     .type ml_unimpl_entry, %function
 ml_unimpl_entry:
     push    {r4, lr}
     mov     r4, sp
-    bic     sp, sp, #7          @ ml_unimpl_log es código de la PS Vita
+    bic     sp, sp, #7          @ ml_unimpl_log is native PS Vita code (AAPCS 8-byte aligned)
     mov     r0, r12
     blx     ml_unimpl_log
     mov     sp, r4
@@ -18,8 +18,8 @@ ml_unimpl_entry:
     mov     r1, #0
     bx      lr
 
-@ uint32_t call_guest(void *fn, a0, a1, a2, a3): llama al juego guardando r9, que el código
-@ iOS trata como registro temporal.
+@ uint32_t call_guest(void *fn, a0, a1, a2, a3): invokes guest function while preserving r9,
+@ which iOS treats as a scratch register.
     .global call_guest
     .type call_guest, %function
 call_guest:
@@ -32,8 +32,8 @@ call_guest:
     blx     r12
     pop     {r4, r9, r10, pc}
 
-@ uint32_t call_guest6(void *fn, a0, a1, a2, a3, a4, a5): igual que call_guest, con 2 argumentos
-@ más por pila (render callback de AudioUnit / funciones de 6 argumentos).
+@ uint32_t call_guest6(void *fn, a0, a1, a2, a3, a4, a5): like call_guest, with 2 extra
+@ stack arguments (AudioUnit render callback / 6-argument guest functions).
     .global call_guest6
     .type call_guest6, %function
 call_guest6:
@@ -52,10 +52,10 @@ call_guest6:
     add     sp, sp, #8
     pop     {r4, r5, r9, r10, r11, pc}
 
-@ Entrada a toda función nuestra llamada por el juego (imports y hooks), con ip = destino.
-@ El ABI de iOS ARMv6 solo garantiza pila alineada a 4; el código de la Vita (newlib, vitaGL)
-@ asume 8 (AAPCS) y falla con pila desalineada (NEON con alineación, va_arg de 64 bits). Si sp
-@ está desalineado, se arma un marco alineado copiando 16 palabras de argumentos de pila.
+@ Bridge entry for native functions called by guest code (imports and hooks), with ip = target.
+@ The iOS ARMv6 ABI only guarantees 4-byte stack alignment; Vita code (newlib, vitaGL)
+@ expects 8-byte alignment (AAPCS) and fails on unaligned stacks (aligned NEON, 64-bit va_arg).
+@ If sp is misaligned, an aligned frame is created by copying 16 words of stack arguments.
     .global ml_align_call
     .type ml_align_call, %function
 ml_align_call:

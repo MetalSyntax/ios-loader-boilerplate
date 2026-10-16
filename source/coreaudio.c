@@ -1,8 +1,11 @@
-// AudioUnit RemoteIO + AudioSession de iOS sobre sceAudioOut.
-//
-// FMOD Ex (estático en el juego) mezcla todo y solo necesita una salida: crea un RemoteIO, le
-// pone formato y render callback, y lo arranca. Acá un hilo pide bloques al callback (con
-// call_guest6: es código del juego) y los manda a un puerto BGM de la Vita.
+/**
+ * @file coreaudio.c
+ * @brief iOS AudioUnit RemoteIO and AudioSession emulation on top of sceAudioOut.
+ * @details Handles guest audio output (such as embedded FMOD Ex or custom mixers):
+ *          creates a RemoteIO unit, configures stream format and render callbacks,
+ *          and streams audio on a dedicated high-priority sceAudioOut thread.
+ *          Calls the guest callback via call_guest6.
+ */
 #include <psp2/audioout.h>
 #include <psp2/kernel/threadmgr.h>
 #include <stdlib.h>
@@ -44,11 +47,11 @@ typedef struct {
 
 static int ok(void) { return 0; }
 
-static int au_FindNext(void *prev, const void *desc) { return prev ? 0 : 1; } // un solo componente
+static int au_FindNext(void *prev, const void *desc) { return prev ? 0 : 1; } // single audio component
 
 static int au_InstanceNew(void *comp, audio_unit **out) {
     audio_unit *u = calloc(1, sizeof(*u));
-    // Default de RemoteIO: 44,1 kHz, s16 estéreo intercalado.
+    // RemoteIO default: 44.1 kHz, s16 interleaved stereo.
     u->fmt = (asbd){44100, FOURCC('l', 'p', 'c', 'm'), 0xC, 4, 1, 4, 2, 16, 0};
     *out = u;
     return 0;
@@ -57,7 +60,7 @@ static int au_InstanceNew(void *comp, audio_unit **out) {
 static int au_SetProperty(audio_unit *u, uint32_t id, uint32_t scope, uint32_t elem, const void *data, uint32_t size) {
     if (id == kAudioUnitProperty_StreamFormat) {
         memcpy(&u->fmt, data, sizeof(asbd));
-        l_info("AudioUnit: %d Hz, %u canales, %u bits, flags 0x%X", (int)u->fmt.mSampleRate,
+        l_info("AudioUnit: %d Hz, %u channels, %u bits, flags 0x%X", (int)u->fmt.mSampleRate,
                (unsigned)u->fmt.mChannelsPerFrame, (unsigned)u->fmt.mBitsPerChannel, (unsigned)u->fmt.mFormatFlags);
     } else if (id == kAudioUnitProperty_SetRenderCallback) {
         u->proc = ((void *const *)data)[0];
@@ -82,7 +85,7 @@ static int16_t to_s16(const audio_unit *u, const uint8_t *p) {
         float f = *(const float *)p * 32767.0f;
         return f > 32767 ? 32767 : f < -32768 ? -32768 : (int16_t)f;
     }
-    if (u->fmt.mBitsPerChannel == 32) { // 8.24 (canónico de AudioUnit) o s32
+    if (u->fmt.mBitsPerChannel == 32) { // 8.24 fixed-point (canonical AudioUnit) or s32
         int32_t v = *(const int32_t *)p >> ((fl & kAudioFormatFlagsFixed824) ? 9 : 16);
         return v > 32767 ? 32767 : v < -32768 ? -32768 : v;
     }
@@ -155,9 +158,9 @@ static int au_Dispose(audio_unit *u) {
     return 0;
 }
 
-static int au_Render(void) { return -1; } // entrada (micrófono): no hay
+static int au_Render(void) { return -1; } // audio input (microphone): not supported
 
-// AudioSession: lo que FMOD consulta para elegir formato.
+// AudioSession: queried by audio engines to select stream properties.
 static int as_GetProperty(uint32_t id, uint32_t *size, void *data) {
     memset(data, 0, *size);
     switch (id) {
@@ -188,7 +191,7 @@ const import_entry coreaudio_imports[] = {
     F(AudioOutputUnitStart, au_Start), F(AudioOutputUnitStop, au_Stop), F(AudioUnitRender, au_Render),
     F(AudioSessionInitialize, ok), F(AudioSessionSetActive, ok), F(AudioSessionSetProperty, ok),
     F(AudioSessionGetProperty, as_GetProperty), F(AudioSessionAddPropertyListener, ok),
-    // llega por __nl_symbol_ptr (puntero a función): necesita código, no un bloque de datos
+    // imported via __nl_symbol_ptr (function pointer): requires code stub, not data
     F(AudioSessionRemovePropertyListenerWithUserData, ok),
 };
 const int coreaudio_imports_count = sizeof(coreaudio_imports) / sizeof(coreaudio_imports[0]);

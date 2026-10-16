@@ -1,3 +1,7 @@
+/**
+ * @file log.c
+ * @brief Thread-safe logging subsystem implementation.
+ */
 #include <psp2/kernel/processmgr.h>
 #include <psp2/rtc.h>
 #include <stdarg.h>
@@ -14,7 +18,7 @@ void log_open(const char *path) {
         fclose(log_file);
     log_file = fopen(path, "w");
     if (!log_file)
-        printf("[-] No se pudo abrir archivo de log en %s\n", path);
+        printf("[-] Failed to open log file at %s\n", path);
 }
 
 static void log_v(const char *level, const char *fmt, va_list ap) {

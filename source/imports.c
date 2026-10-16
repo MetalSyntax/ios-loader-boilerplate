@@ -1,3 +1,7 @@
+/**
+ * @file imports.c
+ * @brief Dynamic import lookup router across all subsystem tables.
+ */
 #include <string.h>
 
 #include "imports.h"

@@ -1,6 +1,9 @@
-// Manejo de Input para PS Vita -> iOS.
-// Captura multitouch frontal y botones fisicos / sticks analogicos.
-// Provee mapeo de coordenadas al espacio virtual del juego.
+/**
+ * @file input.c
+ * @brief Input subsystem mapping PS Vita front touch and buttons to iOS touches.
+ * @details Captures front capacitive multitouch and analog stick / button state.
+ *          Maps hardware coordinates into the guest game's virtual coordinate space.
+ */
 #include <psp2/ctrl.h>
 #include <psp2/touch.h>
 #include <string.h>
@@ -23,7 +26,7 @@ void input_init(void) {
     memset(prev_touches, 0, sizeof(prev_touches));
     touch_count = 0;
     prev_count = 0;
-    l_info("Subsistema de input inicializado (touch frontal + analogicos).");
+    l_info("Input subsystem initialized (front touch + analog sticks).");
 }
 
 void input_poll(void) {
@@ -44,8 +47,8 @@ void input_poll(void) {
         touches[i].id = t.report[i].id;
         touches[i].x = t.report[i].x / 2;
         touches[i].y = t.report[i].y / 2;
-        // Mapeo basico a 480x320 apaisado centrado en la pantalla 960x544
-        // (el juego o patch.c puede sobreescribir este mapeo segun su resolucion)
+        // Basic mapping to 480x320 landscape centered on 960x544 screen
+        // (game-specific patch.c can override this mapping based on viewport resolution)
         int gx = (touches[i].x - 72) * 480 / 816;
         int gy = touches[i].y * 320 / 544;
         touches[i].gx = gx < 0 ? 0 : gx > 479 ? 479 : gx;

@@ -1,8 +1,16 @@
+/**
+ * @file patch.h
+ * @brief Game-specific hooks, memory patches, and per-frame logic callbacks.
+ */
 #pragma once
 #include "imports.h"
 
-// Inicializa hooks y parches en memoria especificos del juego
+/**
+ * @brief Initializes game-specific memory patches, trampolines, and binary hooks.
+ */
 void patch_init(void);
 
-// Callback por frame si el motor requiere logica adicional
+/**
+ * @brief Per-frame callback invoked from the main loop for custom game logic.
+ */
 void patch_frame(void);

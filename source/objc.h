@@ -1,3 +1,7 @@
+/**
+ * @file objc.h
+ * @brief Objective-C selector dispatch runtime and on-screen keyboard IME bridge.
+ */
 #pragma once
 #include <stdint.h>
 
