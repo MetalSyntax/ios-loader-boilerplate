@@ -1,0 +1,38 @@
+# Builds
+build/
+build-*/
+*.elf
+*.velf
+*.self
+eboot.bin
+*.vpk
+compile_commands.json
+.DS_Store
+._*
+
+# Datos de juego y anti-DMCA
+*.ipa
+*.zip
+*.app/
+Payload/
+game_app
+game_app/
+ux0_data/
+ux0_data/*/
+rebase.bin
+*.c2e
+*.fev
+*.fsb
+*.mp4
+*.m4v
+*.pvf
+
+# Logs y volcados
+logs/
+*.log
+*.psp2dmp
+psp2core-*
+
+# Herramientas y temporales
+__pycache__/
+*.pyc
