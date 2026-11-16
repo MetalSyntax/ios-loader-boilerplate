@@ -7,7 +7,7 @@
 
 /**
  * @brief Fixed virtual address offset where 32-bit iOS Mach-O binaries are loaded on PS Vita.
- * @details The original iOS executable is typically linked at base 0x1000.
+ * @details The original iOS executable is typically linked at base 0x1000 or 0x4000.
  *          It is loaded shifted to an unused Vita user memory space:
  *          runtime_addr = original_addr + MACHO_SLIDE.
  *          Crash PC addresses can be translated directly by subtracting 0x98000000.
@@ -35,11 +35,23 @@ void macho_run_inits(void);
 uintptr_t macho_sym(const char *name);
 
 /**
+ * @brief Returns the primary entry point parsed from LC_MAIN or LC_UNIXTHREAD.
+ */
+uintptr_t macho_entry(void);
+
+/**
  * @brief Overwrites a guest function entry point with an unconditional trampoline hook.
  * @param[in] name Target guest symbol name.
  * @param[in] dst Destination hook function pointer.
  */
 void macho_hook(const char *name, void *dst);
+
+/**
+ * @brief Overwrites a guest address with an unconditional trampoline hook (ARM or Thumb).
+ * @param[in] vm Target guest virtual address.
+ * @param[in] dst Destination hook function pointer.
+ */
+void macho_hook_addr(uint32_t vm, void *dst);
 
 /**
  * @brief Invokes a guest function preserving r9 register.
@@ -50,3 +62,7 @@ uint32_t call_guest(void *fn, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
  * @brief Invokes a 6-argument guest function preserving r9 register.
  */
 uint32_t call_guest6(void *fn, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5);
+
+static inline int is_guest_addr(uintptr_t a) {
+    return a >= (MACHO_SLIDE - 0x40000u) && a < (MACHO_SLIDE + 0x08000000u);
+}

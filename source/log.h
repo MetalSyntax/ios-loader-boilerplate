@@ -16,6 +16,11 @@ void log_open(const char *path);
 void l_info(const char *fmt, ...);
 
 /**
+ * @brief Logs a debug message (only with DEBUG_LOADER).
+ */
+void l_debug(const char *fmt, ...);
+
+/**
  * @brief Logs a warning message.
  */
 void l_warn(const char *fmt, ...);
